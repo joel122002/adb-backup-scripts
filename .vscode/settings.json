@@ -1,0 +1,13 @@
+{
+  "files.exclude": {
+    "**/.git": true,
+    "**/android_backup": true
+  },
+  "files.watcherExclude": {
+    "**/.git": true,
+    "**/android_backup": true,
+    "progress.json": true,
+    "backup.log": true,
+    "file_list.txt": true
+  }
+}
