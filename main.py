@@ -8,6 +8,54 @@ import logging
 import time
 import hashlib
 from pathlib import Path
+import threading
+
+# Global variables for hotkey
+is_paused = False
+
+def hotkey_listener():
+    global is_paused
+    if os.name == 'nt':
+        import msvcrt
+        while True:
+            try:
+                if msvcrt.kbhit():
+                    key = msvcrt.getch()
+                    if key.lower() == b'p':
+                        is_paused = not is_paused
+                        if is_paused:
+                            print("\n[Hotkey 'p' pressed] Pausing after the current file finishes...", flush=True)
+                        else:
+                            print("\n[Hotkey 'p' pressed] Resuming...", flush=True)
+                time.sleep(0.1)
+            except Exception:
+                pass
+    else:
+        import tty, termios, select, atexit
+        try:
+            fd = sys.stdin.fileno()
+            old_settings = termios.tcgetattr(fd)
+            
+            def restore_tty():
+                try:
+                    termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+                except Exception:
+                    pass
+            
+            atexit.register(restore_tty)
+            tty.setcbreak(fd)
+            
+            while True:
+                if select.select([sys.stdin], [], [], 0.1)[0]:
+                    key = sys.stdin.read(1)
+                    if key.lower() == 'p':
+                        is_paused = not is_paused
+                        if is_paused:
+                            print("\n[Hotkey 'p' pressed] Pausing after the current file finishes...", flush=True)
+                        else:
+                            print("\n[Hotkey 'p' pressed] Resuming...", flush=True)
+        except Exception:
+            pass
 
 # Configure logging
 logging.basicConfig(
@@ -200,6 +248,11 @@ def main():
     """Main backup function."""
     logging.info(f"Starting Android backup")
     
+    # Start hotkey listener thread
+    print("Initializing hotkey listener... Press 'p' at any time to pause/resume backup.")
+    listener_thread = threading.Thread(target=hotkey_listener, daemon=True)
+    listener_thread.start()
+    
     # Check ADB connection
     if not check_adb_connection():
         logging.error("ADB connection failed. Exiting.")
@@ -231,6 +284,28 @@ def main():
     
     try:
         for android_path in android_files:
+            # Check if paused by hotkey
+            if is_paused:
+                print("\nYour device is ready to eject.")
+                logging.info("Backup paused by hotkey.")
+                
+                # Wait until user resumes
+                while is_paused:
+                    time.sleep(0.5)
+                
+                print("\nWaiting for ADB device to reconnect...")
+                logging.info("Backup resumed by hotkey. Waiting for device...")
+                
+                # Silently wait for ADB without spamming logs
+                while True:
+                    result = subprocess.run(['adb', 'devices'], capture_output=True, text=True, timeout=5)
+                    if result.returncode == 0 and "device" in result.stdout and len(result.stdout.strip().splitlines()) > 1:
+                        break
+                    time.sleep(2)
+                
+                print("Device connected. Continuing backup...")
+                logging.info("ADB device reconnected. Resuming backup.")
+                
             # Convert Android path to local path
             # Use normpath to ensure correct slash direction for the local OS
             rel_path = android_path.lstrip('/')
