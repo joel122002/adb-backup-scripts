@@ -14,7 +14,7 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler("backup.log"),
+        logging.FileHandler("backup.log", encoding='utf-8'),
         logging.StreamHandler(sys.stdout)
     ]
 )
@@ -28,12 +28,12 @@ LOCAL_BACKUP_DIR = "android_backup"
 def check_adb_connection():
     """Check if ADB is connected to a device."""
     try:
-        result = subprocess.run(['adb', 'devices'], capture_output=True, text=True, timeout=5)
+        result = subprocess.run(['adb', 'devices'], capture_output=True, text=True, encoding='utf-8', timeout=5)
         if result.returncode != 0:
             logging.error("ADB command failed")
             return False
         
-        lines = result.stdout.strip().split('\n')
+        lines = result.stdout.strip().splitlines()
         if len(lines) <= 1 or "device" not in result.stdout:
             logging.error("No ADB device connected")
             return False
@@ -52,7 +52,7 @@ def get_all_files_from_device(path=ANDROID_ROOT):
     try:
         logging.info(f"Listing all files from {path}")
         cmd = ['adb', 'shell', f'find "{path}" -type f 2>/dev/null | sort']
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        result = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', timeout=60)
         if result.returncode != 0:
             logging.error(f"Failed to list files: {result.stderr}")
             return []
@@ -60,7 +60,7 @@ def get_all_files_from_device(path=ANDROID_ROOT):
         files = [line.strip() for line in result.stdout.splitlines() if line.strip()]
         
         # Save file list to disk
-        with open(FILE_LIST, 'w') as f:
+        with open(FILE_LIST, 'w', encoding='utf-8') as f:
             for file in files:
                 f.write(f"{file}\n")
         
@@ -80,7 +80,9 @@ def create_local_directory_structure(files):
     
     for file_path in files:
         # Convert Android path to local path
-        local_dir = os.path.join(LOCAL_BACKUP_DIR, os.path.dirname(file_path.lstrip('/')))
+        # Use normpath to convert slashes to local OS format (e.g. \ on Windows)
+        rel_path = file_path.lstrip('/')
+        local_dir = os.path.normpath(os.path.join(LOCAL_BACKUP_DIR, os.path.dirname(rel_path)))
         
         if local_dir not in created_dirs:
             try:
@@ -98,7 +100,7 @@ def load_progress():
         return {}
     
     try:
-        with open(PROGRESS_FILE, 'r') as f:
+        with open(PROGRESS_FILE, 'r', encoding='utf-8') as f:
             progress = json.load(f)
             logging.info(f"Loaded progress for {len(progress)} files")
             return progress
@@ -112,7 +114,7 @@ def load_progress():
 def save_progress(progress):
     """Save the progress of backed up files."""
     try:
-        with open(PROGRESS_FILE, 'w') as f:
+        with open(PROGRESS_FILE, 'w', encoding='utf-8') as f:
             json.dump(progress, f)
     except Exception as e:
         logging.error(f"Error saving progress file: {str(e)}")
@@ -121,7 +123,7 @@ def get_file_size_on_device(file_path):
     """Get the size of a file on the Android device."""
     try:
         cmd = ['adb', 'shell', f'stat -c %s "{file_path}"']
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+        result = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', timeout=5)
         if result.returncode == 0 and result.stdout.strip().isdigit():
             return int(result.stdout.strip())
         return None
@@ -158,7 +160,7 @@ def pull_file(android_path, local_path):
     try:
         logging.info(f"Pulling file: {android_path}")
         cmd = ['adb', 'pull', android_path, local_path]
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)  # 5 minute timeout
+        result = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', timeout=300)  # 5 minute timeout
         
         if result.returncode != 0:
             logging.error(f"Failed to pull {android_path}: {result.stderr}")
@@ -230,8 +232,9 @@ def main():
     try:
         for android_path in android_files:
             # Convert Android path to local path
+            # Use normpath to ensure correct slash direction for the local OS
             rel_path = android_path.lstrip('/')
-            local_path = os.path.join(LOCAL_BACKUP_DIR, rel_path)
+            local_path = os.path.normpath(os.path.join(LOCAL_BACKUP_DIR, rel_path))
             
             # Periodically check if ADB connection is still alive
             if processed_files % 10 == 0 and processed_files > 0:
