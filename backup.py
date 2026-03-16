@@ -1,6 +1,9 @@
 import os
 import logging
 import sys
+import msvcrt
+import threading
+import time
 from typing import List
 
 from config import BackupConfig
@@ -28,6 +31,28 @@ class BackupOrchestrator:
         self.config = config
         self.client = client
         self.tracker = tracker
+        self._pause_event = threading.Event()
+        self._stop_event = threading.Event()
+
+    def _keyboard_listener(self) -> None:
+        """Daemon thread that continuously listens for the 'p' hotkey to toggle pause state."""
+        while not self._stop_event.is_set():
+            if msvcrt.kbhit():
+                key = msvcrt.getch()
+                if key.lower() == b'p':
+                    # Toggle the pause event
+                    if self._pause_event.is_set():
+                        # We are currently paused; user pressed 'p' to resume
+                        logger.info("Backup resume triggered by user via 'p' key")
+                        self._pause_event.clear()
+                    else:
+                        # We are currently running; user pressed 'p' to pause
+                        logger.info("Backup pause triggered by user via 'p' key")
+                        self._pause_event.set()
+                elif key == b'\x03': # Ctrl+C
+                    # Allow Ctrl+C to propagate to the main thread via standard OS interrupts
+                    pass
+            time.sleep(0.1) # Prevent CPU pegging
 
     def _save_file_list(self, files: List[str]) -> None:
         try:
@@ -95,9 +120,28 @@ class BackupOrchestrator:
         
         logger.info(f"Commencing continuous backup of {total} targets")
         print(f"Starting backup of {total} files...\n")
+        print("Press 'p' at any time to softly pause the backup.")
         
-        try:
-            for path in android_files:
+        # Start keyboard listener daemon
+        listener_thread = threading.Thread(target=self._keyboard_listener, daemon=True)
+        listener_thread.start()
+        
+        while stats["processed"] < total:
+            try:
+                # Obey pause flag nicely before we pull the next file from the array 
+                if self._pause_event.is_set():
+                    print("\n\nThe file that was in progress is now copied.")
+                    print("You can now successfully unplug your phone.")
+                    print("Press 'p' again to resume backup or Ctrl+C to abort.")
+                    
+                    # Spin-wait until the user presses 'p' again to clear the flag
+                    while self._pause_event.is_set() and not self._stop_event.is_set():
+                        time.sleep(0.1)
+                        
+                    if not self._stop_event.is_set():
+                        print("\nResuming backup...")
+                
+                path = android_files[stats["processed"]]
                 rel_path = path.lstrip('/')
                 local_path = os.path.normpath(os.path.join(self.config.local_backup_dir, rel_path))
                 
@@ -124,13 +168,19 @@ class BackupOrchestrator:
                 
                 stats["processed"] += 1
                 ProgressBar.update(stats["processed"], total)
-                
-        except KeyboardInterrupt:
-            print("\n\nBackup interrupted gracefully.")
-            logger.info("Process forcefully interrupted by the user")
-        except Exception as e:
-            print(f"\n\nAn unexpected anomaly occurred: {e}")
-            logger.error(f"Unhandled exception in backup loop: {e}", exc_info=True)
+                                
+            except KeyboardInterrupt:
+                print("\n\nBackup fully aborted by user.")
+                logger.info("Process forcefully interrupted by the user")
+                break
+            except Exception as e:
+                print(f"\n\nAn unexpected anomaly occurred: {e}")
+                logger.error(f"Unhandled exception in backup loop: {e}", exc_info=True)
+                break
+        
+        # Cleanup
+        self._stop_event.set()
+        listener_thread.join(timeout=1.0)
             
         print("\n\n--- Session Summary ---")
         for metric, count in stats.items():
