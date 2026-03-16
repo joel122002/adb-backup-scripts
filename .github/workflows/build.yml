@@ -1,0 +1,42 @@
+name: Build EXE
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: windows-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pyinstaller
+        if (Test-Path requirements.txt) {
+          pip install -r requirements.txt
+        }
+      shell: powershell
+
+    - name: Build with PyInstaller
+      run: pyinstaller --onefile --name adb-backup main.py
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: adb-backup-exe
+        path: dist/adb-backup.exe
+        if-no-files-found: error
